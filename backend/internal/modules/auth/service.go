@@ -347,6 +347,69 @@ func (s *Service) GetMe(ctx context.Context, userID, currentOrgID uuid.UUID) (*A
 	}, nil
 }
 
+// RefreshToken validates an active session token, checks DB validity, and returns a fresh JWT
+func (s *Service) RefreshToken(ctx context.Context, tokenStr string) (*AuthResponse, error) {
+	claims, err := utils.ValidateJWT(tokenStr, s.cfg.JWTSecret)
+	if err != nil {
+		return nil, utils.ErrInvalidToken
+	}
+
+	user, err := s.queries.GetUserByID(ctx, claims.UserID)
+	if err != nil {
+		return nil, ErrUserNotFound
+	}
+
+	membership, err := s.queries.GetMembership(ctx, db.GetMembershipParams{
+		OrganisationID: claims.OrgID,
+		UserID:         claims.UserID,
+	})
+	if err != nil {
+		return nil, ErrNotMemberOfOrg
+	}
+
+	org, err := s.queries.GetOrganisationByID(ctx, claims.OrgID)
+	if err != nil {
+		return nil, ErrOrgNotFound
+	}
+
+	userOrgs, err := s.queries.ListUserOrganisations(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list user organisations: %w", err)
+	}
+
+	duration := time.Duration(s.cfg.JWTExpiryHours) * time.Hour
+	newToken, err := utils.GenerateJWT(user.ID, org.ID, user.Email, membership.Role, s.cfg.JWTSecret, duration)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate refreshed token: %w", err)
+	}
+
+	var orgList []OrganisationDTO
+	for _, o := range userOrgs {
+		orgList = append(orgList, OrganisationDTO{
+			ID:   o.ID,
+			Name: o.Name,
+			Slug: o.Slug,
+			Role: o.Role,
+		})
+	}
+
+	return &AuthResponse{
+		Token: newToken,
+		User: UserDTO{
+			ID:       user.ID,
+			Email:    user.Email,
+			FullName: user.FullName,
+		},
+		ActiveOrg: OrganisationDTO{
+			ID:   org.ID,
+			Name: org.Name,
+			Slug: org.Slug,
+			Role: membership.Role,
+		},
+		Organisations: orgList,
+	}, nil
+}
+
 var nonAlphaNumRegex = regexp.MustCompile(`[^a-z0-9]+`)
 
 func generateSlug(name string) string {

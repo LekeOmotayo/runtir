@@ -1,0 +1,893 @@
+openapi: 3.0.3
+info:
+  title: AfriOps API
+  description: >
+    AfriOps is an AI-powered business operations platform that allows organisations
+    to upload, organise, process, search, and understand business documents with grounded AI answers.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns health status of the API service
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /auth/register:
+    post:
+      summary: Register user and organisation
+      description: Registers a new user, automatically creates their default organisation, sets owner role, and issues a JWT session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered successfully
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: access_token=jwt.token.here; Path=/; HttpOnly; SameSite=Lax
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /auth/login:
+    post:
+      summary: Log in user
+      description: Authenticates user credentials and returns session token and active organisation context.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: access_token=jwt.token.here; Path=/; HttpOnly; SameSite=Lax
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      summary: Log out user
+      description: Clears HTTP-only session cookie.
+      responses:
+        '200':
+          description: Logged out successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /auth/refresh:
+    post:
+      summary: Refresh access token
+      description: Re-issues a fresh JWT token for an active session.
+      responses:
+        '200':
+          description: Session refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/me:
+    get:
+      summary: Get current authenticated user profile
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '200':
+          description: User profile retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/switch-org:
+    post:
+      summary: Switch active organisation
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [org_id]
+              properties:
+                org_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Switched active organisation context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /organisations/current:
+    get:
+      summary: Get active organisation details
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Current organisation profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+                  data:
+                    $ref: '#/components/schemas/Organisation'
+
+  /organisations/members:
+    get:
+      summary: List organisation members
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Members list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Member'
+    post:
+      summary: Add or invite member to organisation
+      description: Requires owner or admin role.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddMemberRequest'
+      responses:
+        '201':
+          description: Member added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Member'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /organisations/members/{user_id}:
+    patch:
+      summary: Update member role
+      description: Modifies member role. Requires owner or admin role. Cannot demote the last owner.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [owner, admin, member]
+      responses:
+        '200':
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Member'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      summary: Remove member from organisation
+      description: Removes user membership. Requires owner or admin role. Cannot remove the last owner.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Member removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /documents:
+    get:
+      summary: List documents with optional filters and pagination
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: q
+          in: query
+          description: Filter by document title or filename
+          schema: { type: string }
+        - name: status
+          in: query
+          description: Filter by status (queued, processing, completed, failed)
+          schema: { type: string }
+        - name: mime_type
+          in: query
+          description: Filter by MIME type (e.g. application/pdf)
+          schema: { type: string }
+        - name: is_archived
+          in: query
+          description: Filter by archived state (default false)
+          schema: { type: boolean, default: false }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Paginated documents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedDocuments'
+    post:
+      summary: Upload document
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                title:
+                  type: string
+      responses:
+        '201':
+          description: Document uploaded and queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /documents/search:
+    get:
+      summary: Search document contents across text passages/chunks
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Content search term
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Content search results with highlighted snippets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedContentSearchResults'
+
+  /documents/{id}:
+    get:
+      summary: Get document details and metadata
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Document details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      summary: Update document title and custom metadata
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                metadata:
+                  type: object
+                  additionalProperties:
+                    type: string
+      responses:
+        '200':
+          description: Document updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+    delete:
+      summary: Delete document and stored file
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Document deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /documents/{id}/archive:
+    post:
+      summary: Archive document
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Document archived
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+
+  /documents/{id}/unarchive:
+    post:
+      summary: Unarchive document
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Document restored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+
+  /documents/{id}/processing:
+    get:
+      summary: Get document extraction and processing status
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Processing details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessingStatus'
+
+  /documents/{id}/retry:
+    post:
+      summary: Retry failed document processing
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Document queued for re-processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+
+  /documents/{id}/download:
+    get:
+      summary: Download original document file
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Binary file stream
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  /ai/conversations:
+    get:
+      summary: List AI chat conversations
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Conversations list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Conversation'
+    post:
+      summary: Start a new AI chat conversation
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+      responses:
+        '201':
+          description: Conversation created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conversation'
+
+  /ai/conversations/{conv_id}/messages:
+    get:
+      summary: Get messages in a conversation
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: conv_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Messages history with citations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Message'
+
+  /ai/conversations/{conv_id}/ask:
+    post:
+      summary: Ask question grounded in organization documents
+      description: Runs the full RAG pipeline, retrieves relevant chunks, queries LLM, and returns answer with citations.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: conv_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question:
+                  type: string
+                  example: What are the Q3 financial highlights?
+      responses:
+        '200':
+          description: Answer generated with citations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+
+  /dashboard/stats:
+    get:
+      summary: Get document metrics and recent uploads
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardStats'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    CookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        message: { type: string }
+        data: { type: object }
+
+    RegisterRequest:
+      type: object
+      required: [email, password, full_name]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        full_name: { type: string }
+        org_name: { type: string }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+        org_id: { type: string, format: uuid }
+
+    AuthResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        data:
+          type: object
+          properties:
+            token: { type: string }
+            user:
+              type: object
+              properties:
+                id: { type: string, format: uuid }
+                email: { type: string }
+                full_name: { type: string }
+            active_organisation:
+              $ref: '#/components/schemas/Organisation'
+            organisations:
+              type: array
+              items:
+                $ref: '#/components/schemas/Organisation'
+
+    Organisation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        role: { type: string }
+
+    Member:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        email: { type: string }
+        full_name: { type: string }
+        avatar_url: { type: string }
+        role: { type: string, enum: [owner, admin, member] }
+        created_at: { type: string }
+
+    AddMemberRequest:
+      type: object
+      required: [email, role]
+      properties:
+        email: { type: string, format: email }
+        full_name: { type: string }
+        role: { type: string, enum: [owner, admin, member] }
+
+    Document:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organisation_id: { type: string, format: uuid }
+        title: { type: string }
+        file_name: { type: string }
+        file_size: { type: integer }
+        mime_type: { type: string }
+        status: { type: string, enum: [queued, processing, completed, failed] }
+        error_message: { type: string }
+        is_archived: { type: boolean }
+        archived_at: { type: string }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    PaginatedDocuments:
+      type: object
+      properties:
+        success: { type: boolean }
+        message: { type: string }
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Document'
+        pagination:
+          type: object
+          properties:
+            page: { type: integer }
+            page_size: { type: integer }
+            total: { type: integer }
+
+    ContentSearchResult:
+      type: object
+      properties:
+        chunk_id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        document_title: { type: string }
+        file_name: { type: string }
+        mime_type: { type: string }
+        chunk_index: { type: integer }
+        page_number: { type: integer }
+        snippet: { type: string }
+
+    PaginatedContentSearchResults:
+      type: object
+      properties:
+        success: { type: boolean }
+        message: { type: string }
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentSearchResult'
+        pagination:
+          type: object
+          properties:
+            page: { type: integer }
+            page_size: { type: integer }
+            total: { type: integer }
+
+    ProcessingStatus:
+      type: object
+      properties:
+        document_id: { type: string, format: uuid }
+        status: { type: string }
+        error_message: { type: string }
+        attempts: { type: integer }
+        max_attempts: { type: integer }
+        started_at: { type: string }
+        completed_at: { type: string }
+        page_count: { type: integer }
+        word_count: { type: integer }
+        chunk_count: { type: integer }
+
+    Conversation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    Message:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        sender_type: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        token_count: { type: integer }
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceCitation'
+        created_at: { type: string }
+
+    SourceCitation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        document_title: { type: string }
+        file_name: { type: string }
+        page_number: { type: integer }
+        relevance_score: { type: number }
+        citation_text: { type: string }
+
+    DashboardStats:
+      type: object
+      properties:
+        total_documents: { type: integer }
+        completed_documents: { type: integer }
+        queued_documents: { type: integer }
+        processing_documents: { type: integer }
+        failed_documents: { type: integer }
+        recent_documents:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              title: { type: string }
+              file_name: { type: string }
+              status: { type: string }
+              created_at: { type: string }
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              error: { type: string }
+    Unauthorized:
+      description: Authentication required or invalid session
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              error: { type: string }
+    Forbidden:
+      description: Insufficient permissions or wrong organization
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              error: { type: string }
+    NotFound:
+      description: Requested resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              error: { type: string }
+    Conflict:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: false }
+              error: { type: string }

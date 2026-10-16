@@ -33,3 +33,14 @@ SET
     updated_at = NOW()
 WHERE id = $1
 RETURNING *;
+
+-- name: ResetProcessingJob :one
+UPDATE processing_jobs
+SET 
+    status = 'queued',
+    error_message = NULL,
+    started_at = NULL,
+    completed_at = NULL,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;

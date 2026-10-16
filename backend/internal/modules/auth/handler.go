@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lekeOmotayo/runtir/internal/config"
@@ -29,6 +30,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup, authMW gin.HandlerFunc) {
 		authGroup.POST("/register", h.Register)
 		authGroup.POST("/login", h.Login)
 		authGroup.POST("/logout", h.Logout)
+		authGroup.POST("/refresh", h.RefreshToken)
 
 		// Protected endpoints
 		authGroup.GET("/me", authMW, h.GetMe)
@@ -88,6 +90,40 @@ func (h *Handler) Login(c *gin.Context) {
 func (h *Handler) Logout(c *gin.Context) {
 	h.clearAuthCookie(c)
 	utils.SuccessResponse(c, http.StatusOK, "Logged out successfully", nil)
+}
+
+// RefreshToken re-issues an access token for an active session and updates the cookie
+func (h *Handler) RefreshToken(c *gin.Context) {
+	tokenStr := ""
+
+	// 1. Try reading from cookie first
+	if cookieToken, err := c.Cookie(h.cfg.CookieName); err == nil && cookieToken != "" {
+		tokenStr = cookieToken
+	}
+
+	// 2. Fall back to Authorization: Bearer <token>
+	if tokenStr == "" {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+			tokenStr = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	if tokenStr == "" {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "Missing session token", "no token found in cookie or authorization header")
+		return
+	}
+
+	resp, err := h.service.RefreshToken(c.Request.Context(), tokenStr)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "Session refresh failed", err.Error())
+		return
+	}
+
+	// Update HTTP-only cookie with the fresh token
+	h.setAuthCookie(c, resp.Token)
+
+	utils.SuccessResponse(c, http.StatusOK, "Session refreshed successfully", resp)
 }
 
 // GetMe returns current authenticated user and organisation profile

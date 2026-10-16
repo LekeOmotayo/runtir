@@ -131,6 +131,38 @@ func (q *Queries) ListProcessingJobsByDoc(ctx context.Context, arg ListProcessin
 	return items, nil
 }
 
+const resetProcessingJob = `-- name: ResetProcessingJob :one
+UPDATE processing_jobs
+SET 
+    status = 'queued',
+    error_message = NULL,
+    started_at = NULL,
+    completed_at = NULL,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, document_id, organisation_id, job_type, status, attempts, max_attempts, error_message, started_at, completed_at, created_at, updated_at
+`
+
+func (q *Queries) ResetProcessingJob(ctx context.Context, id uuid.UUID) (ProcessingJob, error) {
+	row := q.db.QueryRow(ctx, resetProcessingJob, id)
+	var i ProcessingJob
+	err := row.Scan(
+		&i.ID,
+		&i.DocumentID,
+		&i.OrganisationID,
+		&i.JobType,
+		&i.Status,
+		&i.Attempts,
+		&i.MaxAttempts,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateProcessingJobStatus = `-- name: UpdateProcessingJobStatus :one
 UPDATE processing_jobs
 SET 

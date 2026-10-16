@@ -62,6 +62,8 @@ type Document struct {
 	ErrorMessage   pgtype.Text        `json:"error_message"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	IsArchived     bool               `json:"is_archived"`
+	ArchivedAt     pgtype.Timestamptz `json:"archived_at"`
 }
 
 type DocumentChunk struct {

@@ -12,6 +12,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveDocument = `-- name: ArchiveDocument :one
+UPDATE documents
+SET 
+    is_archived = true,
+    archived_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1 AND organisation_id = $2
+RETURNING id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at, is_archived, archived_at
+`
+
+type ArchiveDocumentParams struct {
+	ID             uuid.UUID `json:"id"`
+	OrganisationID uuid.UUID `json:"organisation_id"`
+}
+
+func (q *Queries) ArchiveDocument(ctx context.Context, arg ArchiveDocumentParams) (Document, error) {
+	row := q.db.QueryRow(ctx, archiveDocument, arg.ID, arg.OrganisationID)
+	var i Document
+	err := row.Scan(
+		&i.ID,
+		&i.OrganisationID,
+		&i.UploadedBy,
+		&i.Title,
+		&i.FileName,
+		&i.FilePath,
+		&i.FileSize,
+		&i.MimeType,
+		&i.FileHash,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsArchived,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
 const countDocumentsByOrg = `-- name: CountDocumentsByOrg :one
 SELECT COUNT(*)
 FROM documents
@@ -57,6 +95,56 @@ func (q *Queries) CountDocumentsByStatus(ctx context.Context, organisationID uui
 	return items, nil
 }
 
+const countDocumentsFiltered = `-- name: CountDocumentsFiltered :one
+SELECT COUNT(*)
+FROM documents
+WHERE organisation_id = $1
+  AND is_archived = $2
+  AND ($3::text IS NULL OR status = $3)
+  AND ($4::text IS NULL OR mime_type = $4)
+`
+
+type CountDocumentsFilteredParams struct {
+	OrganisationID uuid.UUID   `json:"organisation_id"`
+	IsArchived     bool        `json:"is_archived"`
+	Status         pgtype.Text `json:"status"`
+	MimeType       pgtype.Text `json:"mime_type"`
+}
+
+func (q *Queries) CountDocumentsFiltered(ctx context.Context, arg CountDocumentsFilteredParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDocumentsFiltered,
+		arg.OrganisationID,
+		arg.IsArchived,
+		arg.Status,
+		arg.MimeType,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countSearchDocuments = `-- name: CountSearchDocuments :one
+SELECT COUNT(*)
+FROM documents
+WHERE organisation_id = $1
+  AND (
+    title ILIKE '%' || $2 || '%'
+    OR file_name ILIKE '%' || $2 || '%'
+  )
+`
+
+type CountSearchDocumentsParams struct {
+	OrganisationID uuid.UUID   `json:"organisation_id"`
+	Column2        pgtype.Text `json:"column_2"`
+}
+
+func (q *Queries) CountSearchDocuments(ctx context.Context, arg CountSearchDocumentsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSearchDocuments, arg.OrganisationID, arg.Column2)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDocument = `-- name: CreateDocument :one
 INSERT INTO documents (
     organisation_id,
@@ -71,7 +159,7 @@ INSERT INTO documents (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9
 )
-RETURNING id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at
+RETURNING id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at, is_archived, archived_at
 `
 
 type CreateDocumentParams struct {
@@ -113,6 +201,8 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsArchived,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
@@ -147,6 +237,16 @@ func (q *Queries) CreateDocumentMetadata(ctx context.Context, arg CreateDocument
 	return i, err
 }
 
+const deleteAllDocumentMetadata = `-- name: DeleteAllDocumentMetadata :exec
+DELETE FROM document_metadata
+WHERE document_id = $1
+`
+
+func (q *Queries) DeleteAllDocumentMetadata(ctx context.Context, documentID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAllDocumentMetadata, documentID)
+	return err
+}
+
 const deleteDocument = `-- name: DeleteDocument :exec
 DELETE FROM documents
 WHERE id = $1 AND organisation_id = $2
@@ -162,8 +262,23 @@ func (q *Queries) DeleteDocument(ctx context.Context, arg DeleteDocumentParams) 
 	return err
 }
 
+const deleteDocumentMetadataByKey = `-- name: DeleteDocumentMetadataByKey :exec
+DELETE FROM document_metadata
+WHERE document_id = $1 AND key = $2
+`
+
+type DeleteDocumentMetadataByKeyParams struct {
+	DocumentID uuid.UUID `json:"document_id"`
+	Key        string    `json:"key"`
+}
+
+func (q *Queries) DeleteDocumentMetadataByKey(ctx context.Context, arg DeleteDocumentMetadataByKeyParams) error {
+	_, err := q.db.Exec(ctx, deleteDocumentMetadataByKey, arg.DocumentID, arg.Key)
+	return err
+}
+
 const getDocumentByID = `-- name: GetDocumentByID :one
-SELECT id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at
+SELECT id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at, is_archived, archived_at
 FROM documents
 WHERE id = $1 AND organisation_id = $2
 LIMIT 1
@@ -191,6 +306,8 @@ func (q *Queries) GetDocumentByID(ctx context.Context, arg GetDocumentByIDParams
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsArchived,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
@@ -227,8 +344,57 @@ func (q *Queries) GetDocumentMetadata(ctx context.Context, documentID uuid.UUID)
 	return items, nil
 }
 
+const getRecentDocuments = `-- name: GetRecentDocuments :many
+SELECT id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at, is_archived, archived_at
+FROM documents
+WHERE organisation_id = $1
+ORDER BY created_at DESC
+LIMIT $2
+`
+
+type GetRecentDocumentsParams struct {
+	OrganisationID uuid.UUID `json:"organisation_id"`
+	Limit          int32     `json:"limit"`
+}
+
+func (q *Queries) GetRecentDocuments(ctx context.Context, arg GetRecentDocumentsParams) ([]Document, error) {
+	rows, err := q.db.Query(ctx, getRecentDocuments, arg.OrganisationID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Document{}
+	for rows.Next() {
+		var i Document
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganisationID,
+			&i.UploadedBy,
+			&i.Title,
+			&i.FileName,
+			&i.FilePath,
+			&i.FileSize,
+			&i.MimeType,
+			&i.FileHash,
+			&i.Status,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.IsArchived,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDocumentsByOrg = `-- name: ListDocumentsByOrg :many
-SELECT id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at
+SELECT id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at, is_archived, archived_at
 FROM documents
 WHERE organisation_id = $1
 ORDER BY created_at DESC
@@ -264,6 +430,8 @@ func (q *Queries) ListDocumentsByOrg(ctx context.Context, arg ListDocumentsByOrg
 			&i.ErrorMessage,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IsArchived,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -275,6 +443,167 @@ func (q *Queries) ListDocumentsByOrg(ctx context.Context, arg ListDocumentsByOrg
 	return items, nil
 }
 
+const listDocumentsFiltered = `-- name: ListDocumentsFiltered :many
+SELECT id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at, is_archived, archived_at
+FROM documents
+WHERE organisation_id = $1
+  AND is_archived = $2
+  AND ($5::text IS NULL OR status = $5)
+  AND ($6::text IS NULL OR mime_type = $6)
+ORDER BY created_at DESC
+LIMIT $3 OFFSET $4
+`
+
+type ListDocumentsFilteredParams struct {
+	OrganisationID uuid.UUID   `json:"organisation_id"`
+	IsArchived     bool        `json:"is_archived"`
+	Limit          int32       `json:"limit"`
+	Offset         int32       `json:"offset"`
+	Status         pgtype.Text `json:"status"`
+	MimeType       pgtype.Text `json:"mime_type"`
+}
+
+func (q *Queries) ListDocumentsFiltered(ctx context.Context, arg ListDocumentsFilteredParams) ([]Document, error) {
+	rows, err := q.db.Query(ctx, listDocumentsFiltered,
+		arg.OrganisationID,
+		arg.IsArchived,
+		arg.Limit,
+		arg.Offset,
+		arg.Status,
+		arg.MimeType,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Document{}
+	for rows.Next() {
+		var i Document
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganisationID,
+			&i.UploadedBy,
+			&i.Title,
+			&i.FileName,
+			&i.FilePath,
+			&i.FileSize,
+			&i.MimeType,
+			&i.FileHash,
+			&i.Status,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.IsArchived,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchDocuments = `-- name: SearchDocuments :many
+SELECT id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at, is_archived, archived_at
+FROM documents
+WHERE organisation_id = $1
+  AND (
+    title ILIKE '%' || $2 || '%'
+    OR file_name ILIKE '%' || $2 || '%'
+  )
+ORDER BY created_at DESC
+LIMIT $3 OFFSET $4
+`
+
+type SearchDocumentsParams struct {
+	OrganisationID uuid.UUID   `json:"organisation_id"`
+	Column2        pgtype.Text `json:"column_2"`
+	Limit          int32       `json:"limit"`
+	Offset         int32       `json:"offset"`
+}
+
+func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams) ([]Document, error) {
+	rows, err := q.db.Query(ctx, searchDocuments,
+		arg.OrganisationID,
+		arg.Column2,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Document{}
+	for rows.Next() {
+		var i Document
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganisationID,
+			&i.UploadedBy,
+			&i.Title,
+			&i.FileName,
+			&i.FilePath,
+			&i.FileSize,
+			&i.MimeType,
+			&i.FileHash,
+			&i.Status,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.IsArchived,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unarchiveDocument = `-- name: UnarchiveDocument :one
+UPDATE documents
+SET 
+    is_archived = false,
+    archived_at = NULL,
+    updated_at = NOW()
+WHERE id = $1 AND organisation_id = $2
+RETURNING id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at, is_archived, archived_at
+`
+
+type UnarchiveDocumentParams struct {
+	ID             uuid.UUID `json:"id"`
+	OrganisationID uuid.UUID `json:"organisation_id"`
+}
+
+func (q *Queries) UnarchiveDocument(ctx context.Context, arg UnarchiveDocumentParams) (Document, error) {
+	row := q.db.QueryRow(ctx, unarchiveDocument, arg.ID, arg.OrganisationID)
+	var i Document
+	err := row.Scan(
+		&i.ID,
+		&i.OrganisationID,
+		&i.UploadedBy,
+		&i.Title,
+		&i.FileName,
+		&i.FilePath,
+		&i.FileSize,
+		&i.MimeType,
+		&i.FileHash,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsArchived,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
 const updateDocumentStatus = `-- name: UpdateDocumentStatus :one
 UPDATE documents
 SET 
@@ -282,7 +611,7 @@ SET
     error_message = $4,
     updated_at = NOW()
 WHERE id = $1 AND organisation_id = $2
-RETURNING id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at
+RETURNING id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at, is_archived, archived_at
 `
 
 type UpdateDocumentStatusParams struct {
@@ -314,6 +643,78 @@ func (q *Queries) UpdateDocumentStatus(ctx context.Context, arg UpdateDocumentSt
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsArchived,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
+const updateDocumentTitle = `-- name: UpdateDocumentTitle :one
+UPDATE documents
+SET 
+    title = $3,
+    updated_at = NOW()
+WHERE id = $1 AND organisation_id = $2
+RETURNING id, organisation_id, uploaded_by, title, file_name, file_path, file_size, mime_type, file_hash, status, error_message, created_at, updated_at, is_archived, archived_at
+`
+
+type UpdateDocumentTitleParams struct {
+	ID             uuid.UUID `json:"id"`
+	OrganisationID uuid.UUID `json:"organisation_id"`
+	Title          string    `json:"title"`
+}
+
+func (q *Queries) UpdateDocumentTitle(ctx context.Context, arg UpdateDocumentTitleParams) (Document, error) {
+	row := q.db.QueryRow(ctx, updateDocumentTitle, arg.ID, arg.OrganisationID, arg.Title)
+	var i Document
+	err := row.Scan(
+		&i.ID,
+		&i.OrganisationID,
+		&i.UploadedBy,
+		&i.Title,
+		&i.FileName,
+		&i.FilePath,
+		&i.FileSize,
+		&i.MimeType,
+		&i.FileHash,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsArchived,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
+const upsertDocumentMetadata = `-- name: UpsertDocumentMetadata :one
+INSERT INTO document_metadata (
+    document_id,
+    key,
+    value
+) VALUES (
+    $1, $2, $3
+)
+ON CONFLICT (document_id, key) DO UPDATE
+SET value = EXCLUDED.value
+RETURNING id, document_id, key, value, created_at
+`
+
+type UpsertDocumentMetadataParams struct {
+	DocumentID uuid.UUID `json:"document_id"`
+	Key        string    `json:"key"`
+	Value      string    `json:"value"`
+}
+
+func (q *Queries) UpsertDocumentMetadata(ctx context.Context, arg UpsertDocumentMetadataParams) (DocumentMetadatum, error) {
+	row := q.db.QueryRow(ctx, upsertDocumentMetadata, arg.DocumentID, arg.Key, arg.Value)
+	var i DocumentMetadatum
+	err := row.Scan(
+		&i.ID,
+		&i.DocumentID,
+		&i.Key,
+		&i.Value,
+		&i.CreatedAt,
 	)
 	return i, err
 }

@@ -16,8 +16,12 @@ import (
 	"github.com/lekeOmotayo/runtir/internal/config"
 	"github.com/lekeOmotayo/runtir/internal/db"
 	"github.com/lekeOmotayo/runtir/internal/middleware"
+	"github.com/lekeOmotayo/runtir/internal/modules/ai"
 	"github.com/lekeOmotayo/runtir/internal/modules/auth"
+	"github.com/lekeOmotayo/runtir/internal/modules/dashboard"
 	"github.com/lekeOmotayo/runtir/internal/modules/document"
+	"github.com/lekeOmotayo/runtir/internal/modules/organisation"
+	"github.com/lekeOmotayo/runtir/internal/processor"
 	"github.com/lekeOmotayo/runtir/internal/storage"
 	"github.com/lekeOmotayo/runtir/internal/utils"
 )
@@ -99,15 +103,34 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		// Auth Middleware for protected endpoints
 		authMW := middleware.AuthMiddleware(cfg, queries)
 
+		// Background processor pipeline
+		processorService := processor.NewService(queries, storageService)
+
 		// Authentication module
 		authService := auth.NewService(cfg, queries)
 		authHandler := auth.NewHandler(cfg, authService)
 		authHandler.RegisterRoutes(apiV1, authMW)
 
-		// Document ingestion module
+		// Document ingestion & management module
 		docService := document.NewService(cfg, queries, storageService)
+		docService.SetProcessor(processorService)
 		docHandler := document.NewHandler(docService)
 		docHandler.RegisterRoutes(apiV1, authMW)
+
+		// AI RAG & Question-Answering module
+		aiService := ai.NewService(cfg, queries)
+		aiHandler := ai.NewHandler(aiService)
+		aiHandler.RegisterRoutes(apiV1, authMW)
+
+		// Dashboard & Analytics module
+		dashService := dashboard.NewService(queries)
+		dashHandler := dashboard.NewHandler(dashService)
+		dashHandler.RegisterRoutes(apiV1, authMW)
+
+		// Organisation & Memberships module
+		orgService := organisation.NewService(cfg, queries)
+		orgHandler := organisation.NewHandler(orgService)
+		orgHandler.RegisterRoutes(apiV1, authMW)
 	}
 
 	httpServer := &http.Server{

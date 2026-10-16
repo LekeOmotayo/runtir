@@ -26,3 +26,7 @@ vendor/
 .idea/
 .vscode/
 *.swp
+
+# Uploads
+uploads/*
+!uploads/.gitkeep

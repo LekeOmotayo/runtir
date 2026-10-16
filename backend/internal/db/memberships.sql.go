@@ -12,6 +12,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countOwnersByOrg = `-- name: CountOwnersByOrg :one
+SELECT COUNT(*)
+FROM memberships
+WHERE organisation_id = $1 AND role = 'owner'
+`
+
+func (q *Queries) CountOwnersByOrg(ctx context.Context, organisationID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countOwnersByOrg, organisationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createMembership = `-- name: CreateMembership :one
 INSERT INTO memberships (
     organisation_id,

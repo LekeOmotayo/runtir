@@ -41,3 +41,8 @@ RETURNING *;
 -- name: DeleteMembership :exec
 DELETE FROM memberships
 WHERE organisation_id = $1 AND user_id = $2;
+
+-- name: CountOwnersByOrg :one
+SELECT COUNT(*)
+FROM memberships
+WHERE organisation_id = $1 AND role = 'owner';
