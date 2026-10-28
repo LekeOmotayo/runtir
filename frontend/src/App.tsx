@@ -14,7 +14,6 @@ import { AIChat } from './pages/AIChat';
 import { TeamSettings } from './pages/TeamSettings';
 import { Document } from './types';
 import { Loader2, Sparkles } from 'lucide-react';
-
 const MainApp: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
   const [authView, setAuthView] = useState<'login' | 'register'>('login');
