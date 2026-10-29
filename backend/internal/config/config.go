@@ -46,7 +46,7 @@ func LoadConfig() *Config {
 	}
 
 	return &Config{
-		Port:            getEnv("PORT", "8080"),
+		Port:            getEnv("PORT", "8081"),
 		AppEnv:          appEnv,
 		DatabaseURL:     getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/runtir_db?sslmode=disable"),
 		JWTSecret:       getEnv("JWT_SECRET", "afriops-super-secret-jwt-key-2026-very-secure"),
